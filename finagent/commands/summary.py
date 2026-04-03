@@ -16,7 +16,7 @@ JSON_DIR = Path("json_files")
 CURRENCY = "₹"
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────----
 
 
 def fmt(amount: float) -> str:
@@ -29,7 +29,12 @@ def load_entries(name: str) -> list[dict]:
         console.print(f"[red]No log file found for '{name}'. Expected: {path}[/red]")
         raise typer.Exit(1)
     with path.open() as f:
-        return json.load(f)
+        data = []
+        for line in f:
+            line = line.strip()
+            if line:
+                data.append(json.loads(line))
+        return data
 
 
 def parse_date(entry: dict) -> Optional[datetime]:

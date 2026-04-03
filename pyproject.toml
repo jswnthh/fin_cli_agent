@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finagent"
+version = "0.1.0"
+description = "Financial Expenditure Awareness Agent - Track and reflect on your spending habits"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+maintainers = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+keywords = ["finance", "budgeting", "cli", "tracker"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "questionary>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/finagent"
+Documentation = "https://finagent.readthedocs.io/"
+Repository = "https://github.com/yourusername/finagent"
+Issues = "https://github.com/yourusername/finagent/issues"
+Changelog = "https://github.com/yourusername/finagent/blob/main/CHANGELOG.md"
+
+[project.scripts]
+finagent = "finagent.__main__:app"
+
+[tool.setuptools]
+zip-safe = false
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["finagent*"]
+
+[tool.setuptools.package-data]
+finagent = ["*.txt", "*.md"]

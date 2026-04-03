@@ -1,6 +1,6 @@
 import typer
 
-from Commands import logs, reflect, summary, users
+from finagent.commands import logs, reflect, summary, users
 
 app = typer.Typer()
 

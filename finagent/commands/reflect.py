@@ -42,14 +42,20 @@ def load_entries(name: str) -> list[dict]:
         raise typer.Exit(1)
     if path.stat().st_size == 0:
         return []
+    data = []
     with path.open() as f:
-        return json.load(f)
+        for line in f:
+            line = line.strip()
+            if line:
+                data.append(json.loads(line))
+    return data
 
 
-def save_entries(name: str, data: list[dict]) -> None:
+def append_entry(name: str, entry: dict) -> None:
     path = JSON_DIR / f"{name.lower()}_logs.json"
-    with path.open("w") as f:
-        json.dump(data, f, indent=4)
+    with path.open("a") as f:
+        json.dump(entry, f)
+        f.write("\n")
 
 
 def get_todays_entries(data: list[dict]) -> list[dict]:
@@ -58,35 +64,50 @@ def get_todays_entries(data: list[dict]) -> list[dict]:
 
 
 def pick_prompt(data: list[dict], today_entries: list[dict]) -> str:
-    expenses = [e for e in today_entries if e.get("type") == "expense"]
+    # Single pass aggregation to reduce multiple iterations
+    expenses = []
+    total_expense = 0.0
+    unplanned = []
+    unplanned_amount = 0.0
+    category_totals = {}
+    largest_expense = 0.0
+    entry_count = 0
+    has_income = any(e.get("type") == "income" for e in today_entries)
+    has_any_unplanned_memo = False
+    all_unplanned_have_memo = True
+    
+    for e in today_entries:
+        if e.get("type") == "expense":
+            expenses.append(e)
+            amount = e.get("amount", 0)
+            total_expense += amount
+            entry_count += 1
+            
+            if amount > largest_expense:
+                largest_expense = amount
+            
+            cat = e.get("category", "uncategorized")
+            category_totals[cat] = category_totals.get(cat, 0) + amount
+            
+            if e.get("planned") is False:
+                unplanned.append(e)
+                unplanned_amount += amount
+                if e.get("memo"):
+                    has_any_unplanned_memo = True
+                else:
+                    all_unplanned_have_memo = False
 
     if not expenses:
         return "No expenses today. How did that feel?"
 
-    total_expense = sum(e.get("amount", 0) for e in expenses)
-
-    unplanned = [e for e in expenses if e.get("planned") is False]
-    unplanned_amount = sum(e.get("amount", 0) for e in unplanned)
     unplanned_pct = (unplanned_amount / total_expense * 100) if total_expense else 0
 
     # ---- CATEGORY DISTRIBUTION ----
-    category_totals = {}
-    for e in expenses:
-        cat = e.get("category", "uncategorized")
-        category_totals[cat] = category_totals.get(cat, 0) + e.get("amount", 0)
-
     top_category = None
     top_category_pct = 0
-
     if category_totals:
         top_category, top_amount = max(category_totals.items(), key=lambda x: x[1])
         top_category_pct = top_amount / total_expense * 100
-
-    # ---- LARGE SINGLE EXPENSE ----
-    largest_expense = max(e.get("amount", 0) for e in expenses)
-
-    # ---- ENTRY COUNT ----
-    entry_count = len(expenses)
 
     # ---- TRIGGERS ----
 
@@ -95,7 +116,7 @@ def pick_prompt(data: list[dict], today_entries: list[dict]) -> str:
         return "More than half your spending today was unplanned. What was going on emotionally?"
 
     # 2. All unplanned, no memos
-    if unplanned and all(not e.get("memo") for e in unplanned):
+    if unplanned and not has_any_unplanned_memo:
         return "You didn't note a reason for any unplanned spend. Can you recall what you were feeling?"
 
     # 3. Single category dominates
@@ -115,8 +136,7 @@ def pick_prompt(data: list[dict], today_entries: list[dict]) -> str:
         return "You spent in many places today. Does scattered spending reflect a scattered day?"
 
     # 7. No income + high expense
-    income = [e for e in today_entries if e.get("type") == "income"]
-    if not income and total_expense > 0:
+    if not has_income and total_expense > 0:
         return "Heavy spend day with no income. How does that feel?"
 
     # 8. Unplanned spending late in the day (after 8pm meta timestamps)
@@ -135,7 +155,7 @@ def pick_prompt(data: list[dict], today_entries: list[dict]) -> str:
     """
 
     # 10. Memo on every unplanned entry (self-aware day)
-    if unplanned and all(e.get("memo") for e in unplanned):
+    if unplanned and all_unplanned_have_memo:
         return "You noted a reason for every unplanned spend today. You're building awareness — what pattern do you notice across those reasons?"
 
     # 11. Same category appears multiple times unplanned
@@ -147,8 +167,8 @@ def pick_prompt(data: list[dict], today_entries: list[dict]) -> str:
         return f"You made multiple unplanned {repeat_cat[0]} purchases today. Is {repeat_cat[0]} a comfort category for you?"
 
     # 12. Lots of small unplanned expenses (death by a thousand cuts)
-    small_unplanned = [e for e in unplanned if e.get("amount", 0) < 100]
-    if len(small_unplanned) >= 3:
+    small_unplanned_count = sum(1 for e in unplanned if e.get("amount", 0) < 100)
+    if small_unplanned_count >= 3:
         return "Several small unplanned expenses today — each feels harmless but they add up. What's the common thread?"
 
     # 13. Unplanned spend early in the day (before 10am)
@@ -353,8 +373,7 @@ def debrief(
         "note": reflection_text,
     }
 
-    data.append(reflection_entry)
-    save_entries(name, data)
+    append_entry(name, reflection_entry)
 
     console.print()
     console.print(Rule())
