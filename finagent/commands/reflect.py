@@ -40,15 +40,56 @@ def load_entries(name: str) -> list[dict]:
     if not path.exists():
         console.print(f"[red]No log file found for '{name}'.[/red]")
         raise typer.Exit(1)
+
     if path.stat().st_size == 0:
         return []
-    data = []
+
     with path.open() as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                data.append(json.loads(line))
-    return data
+        text = f.read().strip()
+
+    if not text:
+        return []
+
+    entries = []
+    decoder = json.JSONDecoder()
+
+    # first attempt to parse whole document as array
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+    except json.JSONDecodeError:
+        pass
+
+    # fallback: parse line-by-line and from concatenated JSON objects/arrays
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        idx = 0
+        length = len(line)
+        while idx < length:
+            try:
+                item, end = decoder.raw_decode(line, idx)
+            except json.JSONDecodeError:
+                break
+
+            if isinstance(item, dict):
+                entries.append(item)
+            elif isinstance(item, list):
+                entries.extend([it for it in item if isinstance(it, dict)])
+
+            idx = end
+            while idx < length and line[idx].isspace():
+                idx += 1
+
+        if idx < length:
+            console.print(
+                f"[yellow]Warning: unparsed data remaining in {path} line: {line[idx:]}[/yellow]"
+            )
+
+    return entries
 
 
 def append_entry(name: str, entry: dict) -> None:

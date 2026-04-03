@@ -43,7 +43,7 @@ Issues = "https://github.com/yourusername/finagent/issues"
 Changelog = "https://github.com/yourusername/finagent/blob/main/CHANGELOG.md"
 
 [project.scripts]
-finagent = "finagent.__main__:app"
+fin = "finagent.__main__:app"
 
 [tool.setuptools]
 zip-safe = false

@@ -28,13 +28,54 @@ def load_entries(name: str) -> list[dict]:
     if not path.exists():
         console.print(f"[red]No log file found for '{name}'. Expected: {path}[/red]")
         raise typer.Exit(1)
+
     with path.open() as f:
-        data = []
-        for line in f:
-            line = line.strip()
-            if line:
-                data.append(json.loads(line))
-        return data
+        text = f.read().strip()
+
+    if not text:
+        return []
+
+    # some versions store the entire data as a JSON array; some store one object per line
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            # Convert valid entries to dict records only
+            return [entry for entry in parsed if isinstance(entry, dict)]
+    except json.JSONDecodeError:
+        parsed = None
+
+    entries: list[dict] = []
+    decoder = json.JSONDecoder()
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        idx = 0
+        length = len(line)
+        while idx < length:
+            try:
+                item, end = decoder.raw_decode(line, idx)
+            except json.JSONDecodeError:
+                # Could be a bad chunk; stop parsing this line
+                break
+
+            if isinstance(item, dict):
+                entries.append(item)
+            elif isinstance(item, list):
+                entries.extend([entry for entry in item if isinstance(entry, dict)])
+
+            idx = end
+            while idx < length and line[idx].isspace():
+                idx += 1
+
+        if idx < length:
+            console.print(
+                f"[yellow]Warning: unparsed data remaining in {path} line: {line[idx:]}[/yellow]"
+            )
+
+    return entries
 
 
 def parse_date(entry: dict) -> Optional[datetime]:
