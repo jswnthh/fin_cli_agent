@@ -1,5 +1,4 @@
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -9,14 +8,19 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 
+from finagent.commands.logs import rewrite_log_with_summary
+
 app = typer.Typer()
 console = Console()
 
 JSON_DIR = Path("json_files")
+SETTINGS_DIR = Path("db")
+SETTINGS_DIR.mkdir(exist_ok=True)
+
 CURRENCY = "₹"
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────----
+# ── Helpers ─────────────────────────────────────────
 
 
 def fmt(amount: float) -> str:
@@ -26,7 +30,7 @@ def fmt(amount: float) -> str:
 def load_entries(name: str) -> list[dict]:
     path = JSON_DIR / f"{name.lower()}_logs.json"
     if not path.exists():
-        console.print(f"[red]No log file found for '{name}'. Expected: {path}[/red]")
+        console.print(f"[red]No log file found for '{name}'[/red]")
         raise typer.Exit(1)
 
     with path.open() as f:
@@ -35,238 +39,263 @@ def load_entries(name: str) -> list[dict]:
     if not text:
         return []
 
-    # some versions store the entire data as a JSON array; some store one object per line
     try:
-        parsed = json.loads(text)
-        if isinstance(parsed, list):
-            # Convert valid entries to dict records only
-            return [entry for entry in parsed if isinstance(entry, dict)]
+        data = json.loads(text)
+        if isinstance(data, list):
+            return [
+                entry
+                for entry in data
+                if isinstance(entry, dict) and not is_summary_record(entry)
+            ]
     except json.JSONDecodeError:
-        parsed = None
+        pass
 
     entries: list[dict] = []
     decoder = json.JSONDecoder()
+    idx = 0
+    while idx < len(text):
+        try:
+            item, end = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError:
+            break
 
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        idx = 0
-        length = len(line)
-        while idx < length:
-            try:
-                item, end = decoder.raw_decode(line, idx)
-            except json.JSONDecodeError:
-                # Could be a bad chunk; stop parsing this line
-                break
-
-            if isinstance(item, dict):
+        if isinstance(item, dict):
+            if not is_summary_record(item):
                 entries.append(item)
-            elif isinstance(item, list):
-                entries.extend([entry for entry in item if isinstance(entry, dict)])
-
-            idx = end
-            while idx < length and line[idx].isspace():
-                idx += 1
-
-        if idx < length:
-            console.print(
-                f"[yellow]Warning: unparsed data remaining in {path} line: {line[idx:]}[/yellow]"
+        elif isinstance(item, list):
+            entries.extend(
+                [
+                    entry
+                    for entry in item
+                    if isinstance(entry, dict) and not is_summary_record(entry)
+                ]
             )
+
+        idx = end
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
 
     return entries
 
 
-def parse_date(entry: dict) -> Optional[datetime]:
-    raw = entry.get("date")
-    if not raw:
+def load_summary_record(name: str) -> Optional[dict]:
+    path = JSON_DIR / f"{name.lower()}_logs.json"
+    if not path.exists():
         return None
+
+    text = path.read_text().strip()
+    if not text:
+        return None
+
     try:
-        return datetime.strptime(raw, "%d/%m/%Y")
+        data = json.loads(text)
+        if isinstance(data, list):
+            summary_records = [
+                entry
+                for entry in data
+                if isinstance(entry, dict) and entry.get("__summary__") is True
+            ]
+            return summary_records[-1] if summary_records else None
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    idx = 0
+    last_summary = None
+    while idx < len(text):
+        try:
+            item, end = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError:
+            break
+
+        if isinstance(item, dict) and item.get("__summary__") is True:
+            last_summary = item
+        elif isinstance(item, list):
+            for entry in item:
+                if isinstance(entry, dict) and entry.get("__summary__") is True:
+                    last_summary = entry
+
+        idx = end
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+
+    return last_summary
+
+
+"""
+def print_summary_record(summary: dict):
+    if not summary:
+        return
+
+    table = Table(title="Summary metadata", box=box.SIMPLE, show_lines=False)
+    table.add_column("Metric")
+    table.add_column("Value", justify="right")
+
+    table.add_row("Opening balance", fmt(float(summary.get("opening_balance", 0.0))))
+    table.add_row("Total income", fmt(float(summary.get("total_income", 0.0))))
+    table.add_row("Total expense", fmt(float(summary.get("total_expense", 0.0))))
+    table.add_row("Total liability rotations", fmt(float(summary.get("total_liability", 0.0))))
+    table.add_row("Total receivable rotations", fmt(float(summary.get("total_receivable", 0.0))))
+    table.add_row("Available balance", fmt(float(summary.get("available_balance", 0.0))))
+    console.print(table)
+"""
+
+
+def parse_date(entry: dict) -> Optional[datetime]:
+    try:
+        return datetime.strptime(entry.get("date", ""), "%d/%m/%Y")
     except ValueError:
         return None
 
 
-def filter_entries(
-    data: list[dict],
-    type_filter: Optional[str],
-    category_filter: Optional[str],
-    month: Optional[int],
-    year: Optional[int],
-) -> list[dict]:
-    result = []
-    for entry in data:
-        if type_filter and entry.get("type") != type_filter:
-            continue
-        if (
-            category_filter
-            and entry.get("category", "uncategorized") != category_filter
-        ):
-            continue
-        if month or year:
-            dt = parse_date(entry)
-            if dt is None:
-                continue
-            if month and dt.month != month:
-                continue
-            if year and dt.year != year:
-                continue
-        result.append(entry)
-    return result
+def is_summary_record(entry: dict) -> bool:
+    return isinstance(entry, dict) and entry.get("__summary__") is True
 
 
-def compute_summary(
-    data: list[dict],
-) -> tuple[float, float, dict[str, float], list[dict]]:
-    total_income = 0.0
-    total_expense = 0.0
-    category_totals: dict[str, float] = {}
-    expense_entries: list[dict] = []
-
-    for entry in data:
-        amount = float(entry.get("amount", 0))
-        if entry.get("type") == "income":
-            total_income += amount
-        elif entry.get("type") == "expense":
-            total_expense += amount
-            cat = entry.get("category", "uncategorized")
-            category_totals[cat] = category_totals.get(cat, 0) + amount
-            expense_entries.append(entry)
-
-    return total_income, total_expense, category_totals, expense_entries
+def settings_path(name: str) -> Path:
+    return SETTINGS_DIR / f"{name.lower()}_settings.json"
 
 
-# ── Views ──────────────────────────────────────────────────────────────────────
+def load_opening_balance(name: str) -> float:
+    path = settings_path(name)
+    if not path.exists():
+        return 0.0
+
+    try:
+        with path.open() as f:
+            data = json.load(f)
+            return float(data.get("opening_balance", 0.0))
+    except:
+        return 0.0
 
 
-def print_summary(total_income: float, total_expense: float) -> None:
-    balance = total_income - total_expense
-    color = "green" if balance >= 0 else "red"
-
-    t = Table(title="Summary", box=box.ROUNDED, show_lines=True)
-    t.add_column("", style="bold")
-    t.add_column("Amount", justify="right")
-    t.add_row("Income", f"[green]{fmt(total_income)}[/green]")
-    t.add_row("Expense", f"[red]{fmt(total_expense)}[/red]")
-    t.add_row("Balance", f"[{color} bold]{fmt(balance)}[/{color} bold]")
-    console.print(t)
+def save_opening_balance(name: str, amount: float):
+    path = settings_path(name)
+    with path.open("w") as f:
+        json.dump({"opening_balance": amount}, f, indent=2)
 
 
-def print_top_expenses(
-    expense_entries: list[dict], n: Optional[int], reverse: bool
-) -> None:
-    if not expense_entries:
-        console.print("[yellow]No expense entries found.[/yellow]")
+# ── Core Passbook ───────────────────────────────────
+
+
+def print_passbook(entries: list[dict], opening_balance: float, sort: str):
+    if not entries:
+        console.print("[yellow]No entries to display.[/yellow]")
         return
 
-    sorted_entries = sorted(
-        expense_entries, key=lambda x: x.get("amount", 0), reverse=reverse
-    )
-    if n:
-        sorted_entries = sorted_entries[:n]
+    entries.sort(key=lambda e: parse_date(e) or datetime.min)
+    balance = opening_balance
 
-    title = "Top Expenses" if reverse else "Bottom Expenses"
-    t = Table(title=title, box=box.ROUNDED, show_lines=True)
-    t.add_column("#", justify="right", style="dim")
-    t.add_column("Amount", justify="right")
-    t.add_column("Category")
-    t.add_column("Date")
+    table = Table(title="Passbook", box=box.ROUNDED, show_lines=True)
+    table.add_column("S.No", justify="right")
+    table.add_column("Date")
+    table.add_column("Type")
+    table.add_column("Category")
+    table.add_column("Amount", justify="right")
+    table.add_column("Balance", justify="right")
+    table.add_column("Remarks")
 
-    for i, e in enumerate(sorted_entries, 1):
-        t.add_row(
-            str(i),
-            f"[red]{fmt(e.get('amount', 0))}[/red]",
-            e.get("category", "uncategorized"),
-            e.get("date", "-"),
+    rows = []
+    for e in entries:
+        amount = float(e.get("amount", 0))
+        etype = e.get("type")
+        category = e.get("category", "-")
+        date = e.get("date", "-")
+        remarks = e.get("memo", "")
+
+        if etype == "income":
+            balance += amount
+            amt_str = f"[green]+{fmt(amount)}[/green]"
+        elif etype == "expense":
+            balance -= amount
+            amt_str = f"[red]-{fmt(amount)}[/red]"
+        elif etype == "rotation":
+            if category == "liability":
+                balance += amount
+                amt_str = (
+                    f"[green]{fmt(amount)}[/green]"
+                    if amount >= 0
+                    else f"[red]{fmt(amount)}[/red]"
+                )
+            elif category == "receivable":
+                balance -= amount
+                amt_str = (
+                    f"[red]{fmt(amount)}[/red]"
+                    if amount >= 0
+                    else f"[green]{fmt(amount)}[/green]"
+                )
+            else:
+                amt_str = fmt(amount)
+        else:
+            amt_str = fmt(amount)
+
+        bal_color = "green" if balance >= 0 else "red"
+        rows.append(
+            (
+                date,
+                etype,
+                category,
+                amt_str,
+                f"[{bal_color}]{fmt(balance)}[/{bal_color}]",
+                remarks,
+            )
         )
-    console.print(t)
+
+    if sort.lower() != "asc":
+        rows = list(reversed(rows))
+
+    for i, (date, etype, category, amt_str, balance_str, remarks) in enumerate(rows, 1):
+        table.add_row(
+            str(i),
+            date,
+            etype,
+            category,
+            amt_str,
+            balance_str,
+            remarks,
+        )
+
+    final_color = "green" if balance >= 0 else "red"
+    table.add_row(
+        "",
+        "",
+        "",
+        "",
+        "[bold]Available balance[/bold]",
+        f"[{final_color}]{fmt(balance)}[/{final_color}]",
+        "",
+    )
+    console.print(table)
 
 
-def print_category_table(
-    category_totals: dict[str, float],
-    total_expense: float,
-    n: Optional[int],
-    reverse: bool,
-    title: str = "Expenses by Category",
-) -> None:
-    if not category_totals:
-        console.print("[yellow]No expense data found.[/yellow]")
-        return
-
-    sorted_cats = sorted(category_totals.items(), key=lambda x: x[1], reverse=reverse)
-    if n:
-        sorted_cats = sorted_cats[:n]
-
-    t = Table(title=title, box=box.ROUNDED, show_lines=True)
-    t.add_column("Category")
-    t.add_column("Total", justify="right")
-    t.add_column("Share", justify="right")
-
-    for cat, total in sorted_cats:
-        share = (total / total_expense * 100) if total_expense else 0
-        t.add_row(cat, f"[red]{fmt(total)}[/red]", f"{share:.1f}%")
-
-    console.print(t)
-
-
-# ── Command ────────────────────────────────────────────────────────────────────
+# ── Command ─────────────────────────────────────────
 
 
 @app.command()
-def show(
-    name: str = typer.Argument(..., help="Username whose logs to display"),
-    show_max: bool = typer.Option(
-        False, "--max", help="Show top/bottom expense entries"
+def passbook(
+    name: str,
+    sort: str = typer.Option(
+        "desc", "--sort", "-s", help="Use asc for oldest entries first"
     ),
-    max_cat: bool = typer.Option(False, "--max-cat", help="Show top/bottom categories"),
-    n: Optional[int] = typer.Option(None, "-n", help="Limit number of results"),
-    type_filter: Optional[str] = typer.Option(
-        None, "--type", help="Filter by type: income | expense"
-    ),
-    category_filter: Optional[str] = typer.Option(
-        None, "--category", help="Filter by category name"
-    ),
-    month: Optional[int] = typer.Option(
-        None, "--month", min=1, max=12, help="Filter by month (1-12)"
-    ),
-    year: Optional[int] = typer.Option(None, "--year", help="Filter by year"),
-    summary_only: bool = typer.Option(
-        False, "--summary-only", help="Show only the summary table"
-    ),
-    category_only: bool = typer.Option(
-        False, "--category-only", help="Show only category breakdown"
-    ),
-    sort: str = typer.Option("desc", "--sort", help="Sort order: asc | desc"),
+    opening_balance: Optional[float] = typer.Option(None, "--set-balance", "-b"),
 ):
-    """Display financial logs for a user with optional filters and views."""
-    reverse = sort.lower() != "asc"
+    entries = load_entries(name)
 
-    data = load_entries(name)
-    data = filter_entries(data, type_filter, category_filter, month, year)
+    if opening_balance is not None:
+        save_opening_balance(name, opening_balance)
+        console.print(f"[green]Opening balance set to {fmt(opening_balance)}[/green]")
+        rewrite_log_with_summary(name, JSON_DIR / f"{name.lower()}_logs.json")
 
-    if not data:
-        console.print("[yellow]No entries match the given filters.[/yellow]")
-        raise typer.Exit()
+    opening_balance = load_opening_balance(name)
 
-    total_income, total_expense, category_totals, expense_entries = compute_summary(
-        data
-    )
+    summary_record = load_summary_record(name)
+    """
+    if summary_record:
+          print_summary_record(summary_record)
+    """
+    print_passbook(entries, opening_balance, sort)
 
-    if not category_only:
-        print_summary(total_income, total_expense)
-        if summary_only:
-            return
 
-    if show_max:
-        print_top_expenses(expense_entries, n, reverse)
-        return
+if __name__ == "__main__":
+    app()
 
-    if max_cat:
-        print_category_table(
-            category_totals, total_expense, n, reverse, title="Top Categories"
-        )
-        return
-
-    if not summary_only:
-        print_category_table(category_totals, total_expense, n, reverse)
