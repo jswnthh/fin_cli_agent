@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -27,120 +27,6 @@ def fmt(amount: float) -> str:
     return f"{CURRENCY}{amount:,.2f}"
 
 
-def load_entries(name: str) -> list[dict]:
-    path = JSON_DIR / f"{name.lower()}_logs.json"
-    if not path.exists():
-        console.print(f"[red]No log file found for '{name}'[/red]")
-        raise typer.Exit(1)
-
-    with path.open() as f:
-        text = f.read().strip()
-
-    if not text:
-        return []
-
-    try:
-        data = json.loads(text)
-        if isinstance(data, list):
-            return [
-                entry
-                for entry in data
-                if isinstance(entry, dict) and not is_summary_record(entry)
-            ]
-    except json.JSONDecodeError:
-        pass
-
-    entries: list[dict] = []
-    decoder = json.JSONDecoder()
-    idx = 0
-    while idx < len(text):
-        try:
-            item, end = decoder.raw_decode(text, idx)
-        except json.JSONDecodeError:
-            break
-
-        if isinstance(item, dict):
-            if not is_summary_record(item):
-                entries.append(item)
-        elif isinstance(item, list):
-            entries.extend(
-                [
-                    entry
-                    for entry in item
-                    if isinstance(entry, dict) and not is_summary_record(entry)
-                ]
-            )
-
-        idx = end
-        while idx < len(text) and text[idx].isspace():
-            idx += 1
-
-    return entries
-
-
-def load_summary_record(name: str) -> Optional[dict]:
-    path = JSON_DIR / f"{name.lower()}_logs.json"
-    if not path.exists():
-        return None
-
-    text = path.read_text().strip()
-    if not text:
-        return None
-
-    try:
-        data = json.loads(text)
-        if isinstance(data, list):
-            summary_records = [
-                entry
-                for entry in data
-                if isinstance(entry, dict) and entry.get("__summary__") is True
-            ]
-            return summary_records[-1] if summary_records else None
-    except json.JSONDecodeError:
-        pass
-
-    decoder = json.JSONDecoder()
-    idx = 0
-    last_summary = None
-    while idx < len(text):
-        try:
-            item, end = decoder.raw_decode(text, idx)
-        except json.JSONDecodeError:
-            break
-
-        if isinstance(item, dict) and item.get("__summary__") is True:
-            last_summary = item
-        elif isinstance(item, list):
-            for entry in item:
-                if isinstance(entry, dict) and entry.get("__summary__") is True:
-                    last_summary = entry
-
-        idx = end
-        while idx < len(text) and text[idx].isspace():
-            idx += 1
-
-    return last_summary
-
-
-"""
-def print_summary_record(summary: dict):
-    if not summary:
-        return
-
-    table = Table(title="Summary metadata", box=box.SIMPLE, show_lines=False)
-    table.add_column("Metric")
-    table.add_column("Value", justify="right")
-
-    table.add_row("Opening balance", fmt(float(summary.get("opening_balance", 0.0))))
-    table.add_row("Total income", fmt(float(summary.get("total_income", 0.0))))
-    table.add_row("Total expense", fmt(float(summary.get("total_expense", 0.0))))
-    table.add_row("Total liability rotations", fmt(float(summary.get("total_liability", 0.0))))
-    table.add_row("Total receivable rotations", fmt(float(summary.get("total_receivable", 0.0))))
-    table.add_row("Available balance", fmt(float(summary.get("available_balance", 0.0))))
-    console.print(table)
-"""
-
-
 def parse_date(entry: dict) -> Optional[datetime]:
     try:
         return datetime.strptime(entry.get("date", ""), "%d/%m/%Y")
@@ -152,6 +38,95 @@ def is_summary_record(entry: dict) -> bool:
     return isinstance(entry, dict) and entry.get("__summary__") is True
 
 
+def filter_today(entries: list[dict]) -> list[dict]:
+    today = datetime.today().date()
+    return [e for e in entries if (d := parse_date(e)) and d.date() == today]
+
+
+def filter_by_date(entries: list[dict], date_str: str) -> list[dict]:
+    try:
+        target = datetime.strptime(date_str, "%d/%m/%Y").date()
+    except ValueError:
+        console.print("[red]Invalid date format. Use DD/MM/YYYY[/red]")
+        raise typer.Exit(1)
+
+    return [e for e in entries if (d := parse_date(e)) and d.date() == target]
+
+
+def filter_last_days(entries: list[dict], days: int) -> list[dict]:
+    today = datetime.today().date()
+    cutoff = today - timedelta(days=days - 1)
+
+    return [e for e in entries if (d := parse_date(e)) and cutoff <= d.date() <= today]
+
+
+def load_entries(name: str) -> list[dict]:
+    path = JSON_DIR / f"{name.lower()}_logs.json"
+    if not path.exists():
+        console.print(f"[red]No log file found for '{name}'[/red]")
+        raise typer.Exit(1)
+
+    text = path.read_text().strip()
+    if not text:
+        return []
+
+    decoder = json.JSONDecoder()
+    idx = 0
+    entries: list[dict] = []
+
+    while idx < len(text):
+        try:
+            item, end = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError:
+            break
+
+        if isinstance(item, dict):
+            if not is_summary_record(item):
+                entries.append(item)
+
+        elif isinstance(item, list):
+            entries.extend(
+                entry
+                for entry in item
+                if isinstance(entry, dict) and not is_summary_record(entry)
+            )
+
+        idx = end
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+
+    return entries
+
+
+def load_summary_record(name: str) -> dict | None:
+    path = JSON_DIR / f"{name.lower()}_logs.json"
+    if not path.exists():
+        return None
+
+    text = path.read_text().strip()
+    if not text:
+        return None
+
+    decoder = json.JSONDecoder()
+    idx = 0
+    last_summary = None
+
+    while idx < len(text):
+        try:
+            item, end = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError:
+            break
+
+        if isinstance(item, dict) and item.get("__summary__") is True:
+            last_summary = item
+
+        idx = end
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+
+    return last_summary
+
+
 def settings_path(name: str) -> Path:
     return SETTINGS_DIR / f"{name.lower()}_settings.json"
 
@@ -160,7 +135,6 @@ def load_opening_balance(name: str) -> float:
     path = settings_path(name)
     if not path.exists():
         return 0.0
-
     try:
         with path.open() as f:
             data = json.load(f)
@@ -175,6 +149,55 @@ def save_opening_balance(name: str, amount: float):
         json.dump({"opening_balance": amount}, f, indent=2)
 
 
+# ── Balance Helpers ──────────────────────────────────
+
+
+def apply_entry_to_balance(balance: float, e: dict) -> float:
+    """Apply a single entry's effect to a running balance and return the new balance."""
+    amount = float(e.get("amount", 0))
+    etype = e.get("type")
+    category = e.get("category", "-")
+
+    if etype == "income":
+        balance += amount
+    elif etype == "expense":
+        balance -= amount
+    elif etype == "rotation":
+        if category == "liability":
+            balance += amount
+        elif category == "receivable":
+            balance -= amount
+
+    return balance
+
+
+def compute_balance_before(
+    all_entries: list[dict], filtered_entries: list[dict], opening_balance: float
+) -> float:
+    """
+    Compute the running balance just before the earliest entry in filtered_entries.
+    This gives the correct starting balance for filtered views (today, --date, --last).
+    """
+    if not filtered_entries:
+        return opening_balance
+
+    all_entries_sorted = sorted(
+        [e for e in all_entries if parse_date(e)],
+        key=lambda e: parse_date(e),
+    )
+
+    filtered_dates = {parse_date(e) for e in filtered_entries if parse_date(e)}
+    cutoff = min(filtered_dates)
+
+    balance = opening_balance
+    for e in all_entries_sorted:
+        if parse_date(e) >= cutoff:
+            break
+        balance = apply_entry_to_balance(balance, e)
+
+    return balance
+
+
 # ── Core Passbook ───────────────────────────────────
 
 
@@ -182,6 +205,8 @@ def print_passbook(entries: list[dict], opening_balance: float, sort: str):
     if not entries:
         console.print("[yellow]No entries to display.[/yellow]")
         return
+
+    today = datetime.today().date()
 
     entries.sort(key=lambda e: parse_date(e) or datetime.min)
     balance = opening_balance
@@ -202,6 +227,9 @@ def print_passbook(entries: list[dict], opening_balance: float, sort: str):
         category = e.get("category", "-")
         date = e.get("date", "-")
         remarks = e.get("memo", "")
+
+        parsed = parse_date(e)
+        is_today = parsed and parsed.date() == today
 
         if etype == "income":
             balance += amount
@@ -230,6 +258,12 @@ def print_passbook(entries: list[dict], opening_balance: float, sort: str):
             amt_str = fmt(amount)
 
         bal_color = "green" if balance >= 0 else "red"
+
+        # Highlight today's rows
+        if is_today:
+            date = f"[bold]{date}[/bold]"
+            remarks = f"[bold]{remarks}[/bold]"
+
         rows.append(
             (
                 date,
@@ -265,6 +299,7 @@ def print_passbook(entries: list[dict], opening_balance: float, sort: str):
         f"[{final_color}]{fmt(balance)}[/{final_color}]",
         "",
     )
+
     console.print(table)
 
 
@@ -274,12 +309,13 @@ def print_passbook(entries: list[dict], opening_balance: float, sort: str):
 @app.command()
 def passbook(
     name: str,
-    sort: str = typer.Option(
-        "desc", "--sort", "-s", help="Use asc for oldest entries first"
-    ),
+    sort: str = typer.Option("desc", "--sort", "-s"),
     opening_balance: Optional[float] = typer.Option(None, "--set-balance", "-b"),
+    full: bool = typer.Option(False, "--full", "-f"),
+    date: Optional[str] = typer.Option(None, "--date", "-d"),
+    last: Optional[int] = typer.Option(None, "--last", "-l"),
 ):
-    entries = load_entries(name)
+    all_entries = load_entries(name)
 
     if opening_balance is not None:
         save_opening_balance(name, opening_balance)
@@ -288,14 +324,23 @@ def passbook(
 
     opening_balance = load_opening_balance(name)
 
-    summary_record = load_summary_record(name)
-    """
-    if summary_record:
-          print_summary_record(summary_record)
-    """
-    print_passbook(entries, opening_balance, sort)
+    # Filtering priority
+    if full:
+        filtered = all_entries
+    elif date:
+        filtered = filter_by_date(all_entries, date)
+    elif last:
+        filtered = filter_last_days(all_entries, last)
+    else:
+        filtered = filter_today(all_entries)
+
+    # Compute the correct starting balance for the filtered window.
+    # For --full, this is just the opening_balance (no entries precede the window).
+    # For all other filters, we accumulate all transactions before the window first.
+    starting_balance = compute_balance_before(all_entries, filtered, opening_balance)
+
+    print_passbook(filtered, starting_balance, sort)
 
 
 if __name__ == "__main__":
     app()
-

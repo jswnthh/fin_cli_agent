@@ -57,7 +57,11 @@ def parse_log_entries(path: Path) -> list[dict]:
     try:
         data = json.loads(text)
         if isinstance(data, list):
-            return [entry for entry in data if isinstance(entry, dict) and not is_summary_record(entry)]
+            return [
+                entry
+                for entry in data
+                if isinstance(entry, dict) and not is_summary_record(entry)
+            ]
     except json.JSONDecodeError:
         pass
 
@@ -75,7 +79,11 @@ def parse_log_entries(path: Path) -> list[dict]:
                 entries.append(item)
         elif isinstance(item, list):
             entries.extend(
-                [entry for entry in item if isinstance(entry, dict) and not is_summary_record(entry)]
+                [
+                    entry
+                    for entry in item
+                    if isinstance(entry, dict) and not is_summary_record(entry)
+                ]
             )
 
         idx = end
@@ -134,11 +142,6 @@ def write_log_file(entries: list[dict], summary: dict, path: Path) -> None:
         json.dump(summary, f)
         f.write("\n")
 
-def parse_date(entry: dict) -> Optional[datetime]:
-    try:
-        return datetime.strptime(entry.get("date", ""), "%d/%m/%Y")
-    except ValueError:
-        return None
 
 def rewrite_log_with_summary(name: str, file_path: Path) -> float:
     entries = parse_log_entries(file_path)
