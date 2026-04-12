@@ -20,7 +20,7 @@ SETTINGS_DIR.mkdir(exist_ok=True)
 CURRENCY = "₹"
 
 
-# ── Helpers ─────────────────────────────────────────
+# Helpers
 
 
 def fmt(amount: float) -> str:
@@ -149,7 +149,7 @@ def save_opening_balance(name: str, amount: float):
         json.dump({"opening_balance": amount}, f, indent=2)
 
 
-# ── Balance Helpers ──────────────────────────────────
+# Balance Helpers
 
 
 def apply_entry_to_balance(balance: float, e: dict) -> float:
@@ -198,7 +198,7 @@ def compute_balance_before(
     return balance
 
 
-# ── Core Passbook ───────────────────────────────────
+# Core Passbook
 
 
 def print_passbook(entries: list[dict], opening_balance: float, sort: str):
@@ -309,12 +309,44 @@ def print_passbook(entries: list[dict], opening_balance: float, sort: str):
 @app.command()
 def passbook(
     name: str,
-    sort: str = typer.Option("desc", "--sort", "-s"),
-    opening_balance: Optional[float] = typer.Option(None, "--set-balance", "-b"),
-    full: bool = typer.Option(False, "--full", "-f"),
-    date: Optional[str] = typer.Option(None, "--date", "-d"),
-    last: Optional[int] = typer.Option(None, "--last", "-l"),
+    sort: str = typer.Option(
+        "desc",
+        "--sort",
+        "-s",
+        help="Sort order for displaying entries. "
+        "'asc' shows oldest entries first, 'desc' shows newest first (default).",
+    ),
+    opening_balance: Optional[float] = typer.Option(
+        None,
+        "--set-balance",
+        "-b",
+        help="Set or update the opening balance for this account. "
+        "If provided, this overwrites the stored opening balance.",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        "-f",
+        help="Show the complete passbook history. "
+        "By default, only today's entries are displayed.",
+    ),
+    date: Optional[str] = typer.Option(
+        None,
+        "--date",
+        "-d",
+        help="Filter passbook entries for a specific date. "
+        "Provide date in DD/MM/YYYY format. "
+        "Overrides default today-only view.",
+    ),
+    last: Optional[int] = typer.Option(
+        None,
+        "--last",
+        "-l",
+        help="Show entries for the last N days (including today). "
+        "Overrides default today-only view.",
+    ),
 ):
+
     all_entries = load_entries(name)
 
     if opening_balance is not None:

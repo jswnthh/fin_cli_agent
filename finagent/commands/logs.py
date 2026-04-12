@@ -163,7 +163,7 @@ def compute_balance(name: str, file_path: Path) -> float:
     entries.sort(key=lambda e: parse_date(e) or datetime.min)
 
     for e in entries:
-        amount = float(e.get("amount", 0))
+        amount = float(e.get("amount", 0) or 0)
         etype = e.get("type")
         category = e.get("category", "")
 
@@ -182,6 +182,15 @@ def compute_balance(name: str, file_path: Path) -> float:
 
 def format_balance(balance: float) -> str:
     return f"Available balance: {fmt(balance)}"
+
+
+def strip_amount(amount):
+    amount_list = amount.split("+")
+    for i in range(len(amount_list)):
+        amount_list[i] = float(amount_list[i])
+    amount = sum(amount_list)
+    print("Entered amount is: ", amount)
+    return amount
 
 
 # -------------------------
@@ -415,7 +424,7 @@ def add(
             ).ask()
 
             try:
-                amount = float(amount_str)
+                amount = strip_amount(amount_str)
             except ValueError:
                 print("Invalid amount, skipping entry.")
                 continue
