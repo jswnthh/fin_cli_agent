@@ -485,5 +485,35 @@ def add(
         print("Logging complete.")
 
 
+@app.command()
+def undo(
+    name: str = typer.Argument(None),
+    undo_steps: int = typer.Option(0, "--undo", help="Undo last N transactions"),
+):
+    file_path = JSON_DIR / f"{name.lower()}_logs.json"
+
+    if file_path:
+        entries = parse_log_entries(file_path)
+
+        if not entries:
+            print("No entries to undo.")
+
+    # Remove last entry
+    removed = entries.pop()
+
+    # recompute summary
+    summary = compute_aggregates(name, entries)
+    write_log_file(entries, summary, file_path)
+
+    print("Last transaction undone:")
+    print(removed)
+
+    print(format_balance(summary["available_balance"]))
+
+    if not file_path.exists():
+        print("File not found.")
+        return
+
+
 if __name__ == "__main__":
     app()
